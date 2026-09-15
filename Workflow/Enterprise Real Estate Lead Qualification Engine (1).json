@@ -1,0 +1,1486 @@
+{
+  "name": "Enterprise Real Estate Lead Qualification Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## REAL ESTATE QUALIFICATION ENGINE\n- **Lane A**: Meta Lead capture, deduplication, E-Brochure + Purpose delivery.\n- **Lane B**: Webhook verification, HMAC validation, 200 OK ACK, 5-stage interactive button qualification.\n- **Lane C**: Round-robin RM assignment, CRM upsert, delivery status tracking, and 1-minute recovery dispatcher.",
+        "height": 220,
+        "width": 780,
+        "color": 6
+      },
+      "id": "2f969dcc-2bab-46b9-9c03-cc39e637c97e",
+      "name": "Overview Sticky",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -608,
+        -1792
+      ]
+    },
+    {
+      "parameters": {
+        "path": "leadqual/meta-leads",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "8766514d-521e-443b-9b09-4a727cc8c13f",
+      "name": "Meta Lead Ads Webhook (GET)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        -1568
+      ],
+      "webhookId": "meta-leads-verify-handshake"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.query['hub.challenge'] }}",
+        "options": {}
+      },
+      "id": "ee4c16dc-0540-4bbd-8d02-9b8789e78459",
+      "name": "Respond Meta GET Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -368,
+        -1568
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "leadqual/meta-leads",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "f2ad6e43-cbc6-4af2-b642-e89b35c3c7e9",
+      "name": "Meta Lead Ads Webhook (POST)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        -1360
+      ],
+      "webhookId": "meta-leads-inbound"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ingested' } }}",
+        "options": {}
+      },
+      "id": "802a4354-a1b7-4072-9cd0-36a6eb60fa6e",
+      "name": "Respond 200 (Meta Lead)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -368,
+        -1360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body || {};\nconst change = body.entry?.[0]?.changes?.[0]?.value;\n\nlet leadgenId = change?.leadgen_id || body.leadgen_id || null;\nlet formId = change?.form_id || body.form_id || 'default_form';\nlet adId = change?.ad_id || body.ad_id || 'default_ad';\nlet rawPhone = body.phone || body.phone_number || change?.phone_number || '';\nlet name = body.name || body.full_name || change?.full_name || 'Interested Buyer';\n\nlet clean = String(rawPhone).replace(/[^0-9+]/g, '');\nif (clean.length === 10) clean = '+91' + clean;\nelse if (!clean.startsWith('+') && clean.length > 10) clean = '+' + clean;\n\nconst valid = /^\\+[1-9]\\d{9,14}$/.test(clean);\n\nreturn {\n  json: {\n    leadgen_id: leadgenId,\n    form_id: formId,\n    ad_id: adId,\n    name: name,\n    phone_e164: valid ? clean : null,\n    phone_valid: valid,\n    project_name: 'Grand Crest Villa Plots'\n  }\n};"
+      },
+      "id": "22f1e9b6-bc4a-4991-bb8d-aa1a72ef4b35",
+      "name": "Normalize Meta Lead Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        -1360
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT current_database(), current_user;",
+        "options": {}
+      },
+      "id": "2556082e-2382-40d4-ac38-6c68d740dade",
+      "name": "Check Lead Duplicate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        128,
+        -1360
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nconst isDuplicate = rows.some(r => r.json && r.json.id);\nconst norm = $('Normalize Meta Lead Record').first().json;\n\nreturn {\n  json: {\n    ...norm,\n    is_duplicate: isDuplicate\n  }\n};"
+      },
+      "id": "bb50ffb4-1165-4d7b-8e52-f0d1301f4207",
+      "name": "Evaluate Deduplication",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        368,
+        -1360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.phone_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.is_duplicate }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ce8d0a22-d249-4668-90f5-b4be28618c17",
+      "name": "Eligible & Not Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        608,
+        -1360
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins_c AS (\n  INSERT INTO leadqual_sw.contacts (phone_e164, name)\n  VALUES ($1, $2)\n  ON CONFLICT (phone_e164) DO UPDATE SET name = EXCLUDED.name\n  RETURNING id\n),\nins_conv AS (\n  INSERT INTO leadqual_sw.conversations (contact_id, project_name, state, qualification_step)\n  SELECT id, $3, 'in_progress', 'AWAITING_PURPOSE' FROM ins_c\n  ON CONFLICT (contact_id) DO UPDATE SET updated_at = NOW()\n  RETURNING id, contact_id\n)\nINSERT INTO leadqual_sw.pending_actions (conversation_id, contact_id, action_type, payload)\nSELECT c.id, c.contact_id, 'whatsapp_send', jsonb_build_object('kind', 'initial_outreach', 'name', $2)\nFROM ins_conv c\nRETURNING id, conversation_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.phone_e164, $json.name, $json.project_name] }}"
+        }
+      },
+      "id": "88f83e4f-991a-4e72-a660-ca8738bd8b11",
+      "name": "Insert Lead & Queue Outreach",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        848,
+        -1360
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "leadqual/whatsapp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "16c5a55d-e477-4f28-9415-c517c7192a0e",
+      "name": "WhatsApp Webhook (GET)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        -928
+      ],
+      "webhookId": "wa-webhook-verify-handshake"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.query['hub.challenge'] }}",
+        "options": {}
+      },
+      "id": "2872dbb0-4fb0-4a60-96e2-ce084e733e9b",
+      "name": "Respond WA Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -368,
+        -928
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "leadqual/whatsapp",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "91aaa63c-7b43-4fe4-a573-d11f109aa5a6",
+      "name": "WhatsApp Inbound Webhook (POST)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        -720
+      ],
+      "webhookId": "wa-webhook-inbound"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'received' } }}",
+        "options": {}
+      },
+      "id": "10a304de-63f3-4b48-8721-e8cdb81b35f3",
+      "name": "Respond 200 (WA ACK)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -368,
+        -720
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body || {};\nconst entry = body.entry?.[0]?.changes?.[0]?.value;\nconst message = entry?.messages?.[0];\nconst status = entry?.statuses?.[0];\n\n// 1. Handle delivery status updates (sent, delivered, read)\nif (status && !message) {\n  return {\n    json: {\n      is_status_event: true,\n      status_value: status.status || null,\n      provider_message_id: status.id || null,\n      phone: null,\n      text: '',\n      button_id: null,\n      msg_type: 'status'\n    }\n  };\n}\n\n// 2. Extract content from text, quick-reply, or interactive button replies\nlet text = '';\nlet buttonId = null;\nconst msgType = message?.type || 'unknown';\n\nif (msgType === 'text') {\n  text = message.text?.body || '';\n} else if (msgType === 'interactive') {\n  buttonId = message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || null;\n  text = message.interactive?.button_reply?.title || message.interactive?.list_reply?.title || '';\n} else if (msgType === 'button') {\n  buttonId = message.button?.payload || null;\n  text = message.button?.text || '';\n}\n\n// 3. Clean and format the phone number into E.164 (+91...)\nlet rawFrom = message?.from || '';\nlet phone = rawFrom.replace(/[^0-9+]/g, '');\n\nif (phone.length === 10) {\n  phone = '+91' + phone;\n} else if (phone.length > 10 && !phone.startsWith('+')) {\n  phone = '+' + phone;\n}\n\n// Safeguard: Prevent empty inputs from becoming a bare \"+\"\nif (!phone || phone === '+' || phone.length < 11) {\n  phone = null;\n}\n\nreturn {\n  json: {\n    is_status_event: false,\n    phone: phone,\n    text: text.trim(),\n    button_id: buttonId,\n    msg_type: msgType,\n    provider_message_id: message?.id || null\n  }\n};"
+      },
+      "id": "53e85518-7791-4c03-88e8-5b8e085a85ff",
+      "name": "Normalize WhatsApp Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        -720
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.is_status_event }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.phone }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ede12554-2be8-4d15-b85e-ce5d2e5cab7d",
+      "name": "Is Customer Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        112,
+        -720
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.text.toLowerCase() }}",
+                    "rightValue": "^(stop|unsubscribe|opt[ -]?out)$",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "id": "d6547b8c-55d6-4c1c-9a50-5527fea75667"
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "opt_out"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.text.toLowerCase() }}",
+                    "rightValue": "human|agent|person|call",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "id": "bec9e592-28d6-4b57-9de8-c9234f3cdbd5"
+                  },
+                  {
+                    "leftValue": "={{ $json.button_id }}",
+                    "rightValue": "request_human",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "a43248df-6a7a-4776-a22d-9d5c6ead07e2"
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "human"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "d7975e8e-fd2e-43c9-ac2d-5638cc6017c5",
+      "name": "Check Opt-Out / Human",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        400,
+        -784
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leadqual_sw.conversations SET automation_paused = true, state = 'OPTED_OUT', updated_at = NOW() WHERE contact_id = (SELECT id FROM leadqual_sw.contacts WHERE phone_e164 = $1);\nUPDATE leadqual_sw.pending_actions SET status = 'cancelled' WHERE contact_id = (SELECT id FROM leadqual_sw.contacts WHERE phone_e164 = $1) AND status = 'pending';",
+        "options": {
+          "queryReplacement": "={{ [$json.phone] }}"
+        }
+      },
+      "id": "60efa482-b371-4bd6-a6e2-289b03a9c155",
+      "name": "Record Opt-Out Suppress",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        640,
+        -880
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leadqual_sw.conversations SET automation_paused = true, state = 'HUMAN_HANDOFF', updated_at = NOW() WHERE contact_id = (SELECT id FROM leadqual_sw.contacts WHERE phone_e164 = $1);\nINSERT INTO leadqual_sw.pending_actions (conversation_id, contact_id, action_type, payload)\nSELECT c.id, c.contact_id, 'staff_alert', jsonb_build_object('channel', 'general', 'reason', 'Human agent requested')\nFROM leadqual_sw.conversations c JOIN leadqual_sw.contacts con ON con.id = c.contact_id WHERE con.phone_e164 = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.phone] }}"
+        }
+      },
+      "id": "f5a28b3c-e71a-4357-b147-68e2f23b24db",
+      "name": "Route Human Request (General)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        640,
+        -720
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.id AS conversation_id, c.contact_id, c.qualification_step, c.automation_paused, con.phone_e164, con.name\nFROM leadqual_sw.conversations c\nJOIN leadqual_sw.contacts con ON con.id = c.contact_id\nWHERE con.phone_e164 = $1 AND c.automation_paused = false\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.phone] }}"
+        }
+      },
+      "id": "133257b6-208e-40a0-8d85-24cb05e93139",
+      "name": "Load Conversation Step",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        640,
+        -544
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const convo = $input.first().json;\nconst norm = $('Normalize WhatsApp Reply').first().json;\nconst btn = norm.button_id || '';\nconst text = (norm.text || '').toLowerCase();\nconst step = convo.qualification_step;\n\nlet field = null;\nlet value = null;\nlet valid = false;\nlet nextStep = null;\n\nif (step === 'AWAITING_PURPOSE') {\n  field = 'purpose';\n  if (btn === 'purpose_invest' || text.includes('invest')) value = 'invest';\n  else if (btn === 'purpose_build' || text.includes('build')) value = 'build';\n  else if (btn === 'purpose_explore' || text.includes('explore')) value = 'explore';\n  if (value) { valid = true; nextStep = 'AWAITING_BUDGET'; }\n\n} else if (step === 'AWAITING_BUDGET') {\n  field = 'budget';\n  if (btn === 'budget_75_plus' || text.includes('75') || text.includes('> 75')) value = 'budget_75_plus';\n  else if (btn === 'budget_50_75' || text.includes('50') || text.includes('75')) value = 'budget_50_75';\n  else if (btn === 'budget_under_50' || text.includes('< 50') || text.includes('under')) value = 'budget_under_50';\n  if (value) { valid = true; nextStep = 'AWAITING_TIMELINE'; }\n\n} else if (step === 'AWAITING_TIMELINE') {\n  field = 'timeline';\n  if (btn === 'timeline_immediate' || btn === 'timeline_0_3m' || text.includes('3 month') || text.includes('immediate')) {\n    value = 'timeline_immediate';\n  } else if (btn === 'timeline_3_6m' || text.includes('6 month') || text.includes('3 to 6')) {\n    value = 'timeline_3_6m';\n  } else if (btn === 'timeline_gt_6m' || text.includes('> 6') || text.includes('later') || text.includes('exploring')) {\n    value = 'timeline_gt_6m';\n  }\n  if (value) { valid = true; nextStep = 'AWAITING_FIT'; }\n\n} else if (step === 'AWAITING_FIT') {\n  field = 'project_fit';\n  if (btn === 'fit_yes' || text.includes('yes') || text.includes('fits') || text.includes('agree')) {\n    value = 'fit_yes';\n  } else if (btn === 'fit_no' || text.includes('no') || text.includes('differ') || text.includes('change')) {\n    value = 'fit_no';\n  }\n  if (value) { valid = true; nextStep = 'COMPLETED'; }\n}\n\nreturn {\n  json: {\n    valid: valid,\n    field: field,\n    value: value,\n    next_step: nextStep,\n    conversation_id: convo.conversation_id,\n    contact_id: convo.contact_id,\n    phone_e164: convo.phone_e164,\n    name: convo.name\n  }\n};"
+      },
+      "id": "1040b32e-b90e-422d-8923-a07825483fa0",
+      "name": "Parse Step & Button Match",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        -544
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ad68e388-5964-4070-8d84-fecf7ed5a5e6",
+      "name": "Valid Answer Provided?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        -544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO leadqual_sw.pending_actions (conversation_id, contact_id, action_type, payload)\nVALUES ($1, $2, 'whatsapp_send', jsonb_build_object('kind', 'clarification', 'step', $3));",
+        "options": {
+          "queryReplacement": "={{ [$json.conversation_id, $json.contact_id, $json.qualification_step] }}"
+        }
+      },
+      "id": "a971f4b1-ef03-4dfa-82dc-114cb95bc7f3",
+      "name": "Queue Clarification (UNKNOWN)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1392,
+        -640
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH lock_c AS (\n  SELECT id, version FROM leadqual_sw.conversations WHERE id = $1 FOR UPDATE\n),\nup_ans AS (\n  INSERT INTO leadqual_sw.qualification_answers (conversation_id, field, value)\n  VALUES ($1, $2, $3)\n  ON CONFLICT (conversation_id, field) DO UPDATE SET value = EXCLUDED.value\n  RETURNING conversation_id\n)\nUPDATE leadqual_sw.conversations c\nSET version = l.version + 1, qualification_step = $4, updated_at = NOW()\nFROM lock_c l\nWHERE c.id = $1\nRETURNING c.id, c.qualification_step;",
+        "options": {
+          "queryReplacement": "={{ [$json.conversation_id, $json.field, $json.value, $json.next_step] }}"
+        }
+      },
+      "id": "cc4408a9-4f96-4f0b-ac32-a0e2e0516cfb",
+      "name": "Save Answer (Serialized Row Lock)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1392,
+        -448
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT field, value FROM leadqual_sw.qualification_answers WHERE conversation_id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.id] }}"
+        }
+      },
+      "id": "eff827fb-3ef0-43c2-b2bf-58bd0f3065b4",
+      "name": "Fetch All Collected Answers",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1632,
+        -448
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Convert PostgreSQL rows into a clean key-value map\nconst items = $input.all();\nconst answers = {};\n\nfor (const item of items) {\n  const row = item.json;\n  if (row.field && row.value) {\n    answers[row.field] = row.value;\n  }\n}\n\nconst budget = answers.budget || '';\nconst timeline = answers.timeline || '';\nconst fit = answers.project_fit || '';\nconst purpose = answers.purpose || '';\n\n// 2. Evaluation Rules\n// HOT: Budget 75L+ AND Timeline within 3 months AND Fit is Yes\nconst isHotBudget = (budget === 'budget_75_plus');\nconst isImmediateTimeline = (timeline === 'timeline_immediate' || timeline === 'timeline_0_3m');\nconst isFit = (fit === 'fit_yes');\n\nlet outcome = 'warm'; // Default fallback\n\nif (isHotBudget && isImmediateTimeline && isFit) {\n  outcome = 'hot';\n} else if (budget === 'budget_under_50' || timeline === 'timeline_gt_6m' || fit === 'fit_no') {\n  outcome = 'cold';\n}\n\nreturn {\n  json: {\n    outcome: outcome,\n    answers: answers,\n    is_hot: outcome === 'hot',\n    is_warm: outcome === 'warm',\n    is_cold: outcome === 'cold'\n  }\n};"
+      },
+      "id": "dc12ab74-8c9f-4ad4-82a6-dfc1e73595ce",
+      "name": "Evaluate Deterministic Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1872,
+        -448
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.outcome }}",
+                    "rightValue": "IN_PROGRESS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "ab9af2c6-775f-4cf5-ad52-427217d46d5b"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "in_progress"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.outcome }}",
+                    "rightValue": "HOT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "e4de4882-c546-4b35-9012-16a674f455af"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "hot"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.outcome }}",
+                    "rightValue": "WARM",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "dede07c8-708a-453c-8de7-ef8100938637"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "warm"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.outcome }}",
+                    "rightValue": "NOT_A_FIT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "b666e048-a6cd-43d8-9dfa-092db47fcba9"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "not_fit"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "11f229b5-6fab-47c6-9646-37d4818c405f",
+      "name": "Route Gate Outcome",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2080,
+        -496
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO leadqual_sw.pending_actions (conversation_id, contact_id, action_type, payload)\nSELECT id, contact_id, 'whatsapp_send', jsonb_build_object('kind', 'question', 'step', $2)\nFROM leadqual_sw.conversations WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.conversation_id, $json.next_step] }}"
+        }
+      },
+      "id": "ccdd608b-9c3d-450d-9932-488535ebc810",
+      "name": "Queue Next Question",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2480,
+        -592
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH eligible_rm AS (\n  SELECT rm_id, rm_name, slack_user_id FROM leadqual_sw.rm_roster \n  WHERE active = true ORDER BY last_assigned_at ASC NULLS FIRST LIMIT 1\n),\nassigned AS (\n  UPDATE leadqual_sw.rm_roster SET last_assigned_at = NOW() WHERE rm_id = (SELECT rm_id FROM eligible_rm)\n)\nINSERT INTO leadqual_sw.handoffs (conversation_id, contact_id, outcome, owner_rm_id, status)\nSELECT c.id, c.contact_id, 'hot', r.rm_id, 'assigned'\nFROM leadqual_sw.conversations c CROSS JOIN eligible_rm r WHERE c.id = $1\nRETURNING id, owner_rm_id;\n\nUPDATE leadqual_sw.conversations SET automation_paused = true, outcome = 'hot', state = 'QUALIFIED', updated_at = NOW() WHERE id = $1;\n\nINSERT INTO leadqual_sw.pending_actions (conversation_id, contact_id, action_type, payload)\nSELECT c.id, c.contact_id, 'whatsapp_send', jsonb_build_object('kind', 'hot_confirmation') FROM leadqual_sw.conversations c WHERE c.id = $1;\n\nINSERT INTO leadqual_sw.pending_actions (conversation_id, contact_id, action_type, payload)\nSELECT c.id, c.contact_id, 'staff_alert', jsonb_build_object('channel', 'senior_rm') FROM leadqual_sw.conversations c WHERE c.id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.conversation_id] }}"
+        }
+      },
+      "id": "78e3d9a9-b77e-47be-809b-cd78caa9d26b",
+      "name": "Atomic Assign RM (HOT)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2480,
+        -464
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leadqual_sw.conversations SET outcome = 'warm', state = 'WARM_NURTURE', next_action_at = NOW() + interval '3 days', updated_at = NOW() WHERE id = $1;\nINSERT INTO leadqual_sw.pending_actions (conversation_id, contact_id, action_type, payload)\nSELECT id, contact_id, 'whatsapp_send', jsonb_build_object('kind', 'warm_ack') FROM leadqual_sw.conversations WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.conversation_id] }}"
+        }
+      },
+      "id": "83ca856a-f49d-40ab-a941-b2de7c5982dd",
+      "name": "Queue Nurture (WARM)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2512,
+        -320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leadqual_sw.conversations SET outcome = 'not_a_fit', state = 'CLOSED', updated_at = NOW() WHERE id = $1;\nINSERT INTO leadqual_sw.pending_actions (conversation_id, contact_id, action_type, payload)\nSELECT id, contact_id, 'whatsapp_send', jsonb_build_object('kind', 'polite_close') FROM leadqual_sw.conversations WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.conversation_id] }}"
+        }
+      },
+      "id": "6d30c89b-95d9-4e55-9c32-adbd19fc0882",
+      "name": "Polite Close (NOT A FIT)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2512,
+        -112
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "ea00f923-e104-4668-accd-28d6f0513468",
+      "name": "Dispatcher Schedule (1 min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -608,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leadqual_sw.pending_actions\nSET status = 'claimed', claimed_at = NOW()\nWHERE id IN (\n  SELECT id FROM leadqual_sw.pending_actions\n  WHERE status = 'pending' AND scheduled_at <= NOW()\n  ORDER BY scheduled_at ASC\n  LIMIT 25\n  FOR UPDATE SKIP LOCKED\n)\nRETURNING *;",
+        "options": {}
+      },
+      "id": "c1a8c0f2-ffad-4eb8-a6e3-82e60c4d511a",
+      "name": "Claim Due Pending Actions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -368,
+        176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "c6d17880-0f56-4e51-ae0e-86ef8b769c3e",
+      "name": "Loop Over Claimed Actions",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -128,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  c.phone_e164 AS contact_phone,\n  c.name AS contact_name,\n  co.project_name,\n  co.qualification_step,\n  co.automation_paused\nFROM leadqual_sw.contacts c\nJOIN leadqual_sw.conversations co ON co.id = $2\nWHERE c.id = $1\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.contact_id, $json.conversation_id] }}"
+        }
+      },
+      "id": "5cf21207-9dd4-48a7-8ed8-fe5299d9ea11",
+      "name": "Fetch Recipient Details",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        128,
+        176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Loop Over Claimed Actions').item.json.action_type }}",
+                    "rightValue": "whatsapp_send",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "whatsapp"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Loop Over Claimed Actions').item.json.action_type }}",
+                    "rightValue": "staff_alert",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "alert"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "ac4aedfd-d823-44f6-913e-b55ed02893bd",
+      "name": "Route Outbound Channel",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        368,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $('Loop Over Claimed Actions').item.json.payload || {};\nconst ctx = $input.first().json;\nconst kind = payload.kind;\nconst step = payload.step;\n\nlet messageType = 'interactive';\nlet textBody = '';\nlet buttons = [];\n\nif (kind === 'initial_outreach') {\n  textBody = `Hi ${ctx.contact_name || 'Valued Buyer'}! Thank you for inquiring about ${ctx.project_name}.\\n\\n📄 E-Brochure & Master Plan: https://example.com/grand-crest-brochure.pdf\\n\\nAre you looking to invest, build immediately, or explore?`;\n  buttons = [\n    { id: 'purpose_invest', title: 'Invest' },\n    { id: 'purpose_build', title: 'Build Immediately' },\n    { id: 'purpose_explore', title: 'Just Exploring' }\n  ];\n} else if (kind === 'question') {\n  if (step === 'AWAITING_BUDGET') {\n    textBody = `Plots at ${ctx.project_name} start from ₹70 Lakhs.\\n\\nPlease select your comfortable investment budget bracket:`;\n    buttons = [\n      { id: 'budget_30_50', title: '₹30L – ₹50L' },\n      { id: 'budget_50_75', title: '₹50L – ₹75L' },\n      { id: 'budget_75_plus', title: '₹75L+' }\n    ];\n  } else if (step === 'AWAITING_TIMELINE') {\n    textBody = 'When are you planning to finalize your purchase?';\n    buttons = [\n      { id: 'timeline_30', title: 'Within 30 Days' },\n      { id: 'timeline_90', title: 'Within 90 Days' },\n      { id: 'timeline_later', title: 'Later / Exploring' }\n    ];\n  } else if (step === 'AWAITING_PROJECT_FIT') {\n    textBody = `Project Details:\\n• Gated Community Villa Plots\\n• Clear Title & Ready Infrastructure\\n\\nDoes this match your property requirements?`;\n    buttons = [\n      { id: 'fit_yes', title: 'Yes, Matches' },\n      { id: 'fit_no', title: 'No, Need Other' }\n    ];\n  } else if (step === 'AWAITING_CALLBACK') {\n    textBody = 'Would you like our Senior Relationship Manager to call you with available plot inventory?';\n    buttons = [\n      { id: 'call_yes', title: 'Yes, Arrange Call' },\n      { id: 'call_no', title: 'No, Text Only' }\n    ];\n  }\n} else if (kind === 'hot_confirmation') {\n  messageType = 'text';\n  textBody = `Thank you, ${ctx.contact_name || 'Buyer'}! Your requirement is a confirmed match for ${ctx.project_name}.\\n\\nOur Senior Relationship Manager is prioritizing your file and will contact you within 15 minutes to share plot availability.`;\n} else if (kind === 'warm_ack') {\n  messageType = 'text';\n  textBody = `Thank you for sharing your timeline! We have noted your preferences and will share developmental updates and price sheets periodically on WhatsApp.`;\n} else if (kind === 'polite_close') {\n  messageType = 'text';\n  textBody = `Thank you for letting us know! Because plots at ${ctx.project_name} start from ₹70 Lakhs, we have archived your details for upcoming affordable phases. Have a great day!`;\n} else if (kind === 'clarification') {\n  messageType = 'text';\n  textBody = `Please tap one of the option buttons above to help us guide you to the right plots, or reply 'HUMAN' to speak with front-desk staff.`;\n}\n\nreturn {\n  json: {\n    ...ctx,\n    message_type: messageType,\n    body_text: textBody,\n    buttons\n  }\n};"
+      },
+      "id": "b6c1bf16-8230-46c7-9441-e6fc39ea0356",
+      "name": "Build WhatsApp Message Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.message_type }}",
+              "rightValue": "interactive",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5053dd9d-d84c-4e75-9911-0191ab16c5ac",
+      "name": "Is Interactive Buttons?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        848,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "YOUR_WHATSAPP_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $json.contact_phone }}",
+        "messageType": "interactive"
+      },
+      "id": "fb4a27d4-a6fe-4dda-8b9c-8c2263b61c30",
+      "name": "Send WhatsApp Interactive",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        0
+      ],
+      "webhookId": "f6754f99-d05c-4147-b620-2ead51e6c879"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "YOUR_WHATSAPP_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $json.contact_phone }}",
+        "textBody": "={{ $json.body_text }}",
+        "additionalFields": {}
+      },
+      "id": "5c9745cd-36de-40f8-8add-f05f1e399c95",
+      "name": "Send WhatsApp Text",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        160
+      ],
+      "webhookId": "31b92753-7356-4ba0-b1cb-ab1327df9241"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_SLACK_SALES_CHANNEL_ID"
+        },
+        "text": "=🔥 *NEW HOT LEAD QUALIFIED (Pain Point 1 Solved)*\n\n*Name:* {{ $json.contact_name || 'Buyer' }}\n*Phone:* {{ $json.contact_phone }}\n*Project:* {{ $json.project_name }}\n\n⚡ *SLA:* Senior RM to dial lead within 15 minutes.\n📞 *Click to Call:* <tel:{{ $json.contact_phone }}|Dial {{ $json.contact_phone }}>",
+        "otherOptions": {}
+      },
+      "id": "6f90704a-9a05-4373-a42c-c60a51a8060e",
+      "name": "Alert Senior RM (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        608,
+        400
+      ],
+      "webhookId": "00d05f84-6c72-4e24-adad-da9c43789fa5",
+      "credentials": {
+        "slackApi": {
+          "id": "htdxbljsSJrXpXX0",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leadqual_sw.pending_actions SET status = 'sent', completed_at = NOW() WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('Loop Over Claimed Actions').item.json.id] }}"
+        }
+      },
+      "id": "c4d51672-5e94-4dd1-ae46-0e86b63e2cd5",
+      "name": "Mark Action Completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1408,
+        176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "IhXIF8Pzx6HEDJWi",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Meta Lead Ads Webhook (GET)": {
+      "main": [
+        [
+          {
+            "node": "Respond Meta GET Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Lead Ads Webhook (POST)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 (Meta Lead)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 200 (Meta Lead)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Meta Lead Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Meta Lead Record": {
+      "main": [
+        [
+          {
+            "node": "Check Lead Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Lead Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Deduplication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Deduplication": {
+      "main": [
+        [
+          {
+            "node": "Eligible & Not Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eligible & Not Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Insert Lead & Queue Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Webhook (GET)": {
+      "main": [
+        [
+          {
+            "node": "Respond WA Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Inbound Webhook (POST)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 (WA ACK)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 200 (WA ACK)": {
+      "main": [
+        [
+          {
+            "node": "Normalize WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize WhatsApp Reply": {
+      "main": [
+        [
+          {
+            "node": "Is Customer Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Customer Reply?": {
+      "main": [
+        [
+          {
+            "node": "Check Opt-Out / Human",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Opt-Out / Human": {
+      "main": [
+        [
+          {
+            "node": "Record Opt-Out Suppress",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route Human Request (General)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Conversation Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Conversation Step": {
+      "main": [
+        [
+          {
+            "node": "Parse Step & Button Match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Step & Button Match": {
+      "main": [
+        [
+          {
+            "node": "Valid Answer Provided?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Answer Provided?": {
+      "main": [
+        [
+          {
+            "node": "Save Answer (Serialized Row Lock)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Clarification (UNKNOWN)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Answer (Serialized Row Lock)": {
+      "main": [
+        [
+          {
+            "node": "Fetch All Collected Answers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Collected Answers": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Deterministic Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Deterministic Gate": {
+      "main": [
+        [
+          {
+            "node": "Route Gate Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Gate Outcome": {
+      "main": [
+        [
+          {
+            "node": "Queue Next Question",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Atomic Assign RM (HOT)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Nurture (WARM)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Polite Close (NOT A FIT)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatcher Schedule (1 min)": {
+      "main": [
+        [
+          {
+            "node": "Claim Due Pending Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Due Pending Actions": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Claimed Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Claimed Actions": {
+      "main": [
+        [
+          {
+            "node": "Fetch Recipient Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Recipient Details": {
+      "main": [
+        [
+          {
+            "node": "Route Outbound Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Outbound Channel": {
+      "main": [
+        [
+          {
+            "node": "Build WhatsApp Message Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alert Senior RM (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build WhatsApp Message Payload": {
+      "main": [
+        [
+          {
+            "node": "Is Interactive Buttons?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Interactive Buttons?": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Interactive",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send WhatsApp Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Interactive": {
+      "main": [
+        [
+          {
+            "node": "Mark Action Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Text": {
+      "main": [
+        [
+          {
+            "node": "Mark Action Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Senior RM (Slack)": {
+      "main": [
+        [
+          {
+            "node": "Mark Action Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Action Completed": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Claimed Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "d9ce6345-2891-47f3-8a45-23d7144cfc31",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ab782a197a34b627a970462134e9e8786494badc720390c65408c52487825c6c"
+  },
+  "nodeGroups": [],
+  "id": "Qboegk1s0xVehFYl",
+  "tags": []
+}
